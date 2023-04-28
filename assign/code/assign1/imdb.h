@@ -50,6 +50,8 @@ class imdb {
   
   bool getCredits(const std::string& player, std::vector<film>& films) const;
 
+  std::string getActorName(const int offset) const;
+  film getFilmData(const int offset) const;
 
 /**
  * Method: getCast
