@@ -10,7 +10,7 @@ int directory_findname(struct unixfilesystem *fs, const char *name,
 		       int dirinumber, struct direntv6 *dirEnt) {
 	struct inode in;
 	if (inode_iget(fs, dirinumber, &in) < 0) return -1;
-	if ((in.i_mode & IFMT) == IFDIR || (in.i_mode & IALLOC) == 0) {
+	if ((in.i_mode & IFMT) != IFDIR || (in.i_mode & IALLOC) == 0) {
 		fprintf(stderr, "File with inumber %d is not a directory or not allocated.\n", dirinumber);
 		return -1;
 	}
@@ -24,7 +24,7 @@ int directory_findname(struct unixfilesystem *fs, const char *name,
 		int num_file = read_bytes / sizeof(struct direntv6);
 		for (int i=0; i<num_file; i++) {
 			if (strncmp(buf[i].d_name, name, 14) == 0) {
-				dirEnt = &buf[i];
+				*dirEnt = buf[i];
 				return 0;
 			}
 		}
