@@ -96,30 +96,5 @@ void sp_execvp(const char *file, char *const argv[]) {
 }
 
 subprocess_t subprocess(char *argv[], bool supplyChildInput, bool ingestChildOutput) throw (SubprocessException) {
-  int supplyFd[2], ingestFd[2];
-  sp_pipe(supplyFd);
-  sp_pipe(ingestFd);
 
-  subprocess_t sp = {
-    sp_fork(),
-    (supplyChildInput) ? supplyFd[1] : kNotInUse,
-    (ingestChildOutput) ? ingestFd[0] : kNotInUse
-  };
-
-  if (sp.pid > 0) {
-    // in parent
-    sp_close(supplyFd[0]);
-    sp_close(ingestFd[1]);
-    return sp;
-  }
-
-  // in child subprocess
-  sp_close(supplyFd[1]);
-  sp_close(ingestFd[0]);
-
-  if (supplyChildInput) sp_dup2(supplyFd[0], STDIN_FILENO);
-  if (ingestChildOutput) sp_dup2(ingestFd[1], STDOUT_FILENO);
-  sp_close(supplyFd[0]);
-  sp_close(ingestFd[1]);
-  sp_execvp(argv[0], argv);
 }
