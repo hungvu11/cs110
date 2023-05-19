@@ -5,21 +5,38 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include "subprocess.h"
 using namespace std;
 
 subprocess_t subprocess(char *argv[], bool supplyChildInput, bool ingestChildOutput) throw (SubprocessException) {
-    int fds[2];
-    pipe(fds);
-    subprocess_t process = { fork(), fds[1], fds[0] };
-    if (process.pid == 0) { 
-        close(fds[1]); // no writing necessary
-        if (supplyChildInput == true) {
-            dup2(fds[0], STDIN_FILENO);
-            close(fds[0]); // already duplicated
-        }
-        execvp(argv[0], argv);
+    int supplyfd[2], ingestfd[2];
+    pipe(supplyfd);
+    pipe(ingestfd);
+
+    subprocess_t process = {
+        fork(),
+        (supplyChildInput) ? supplyfd[1] : kNotInUse,
+        (ingestChildOutput) ? ingestfd[0] : kNotInUse
+    };
+
+    if (process.pid > 0) {
+        // parent
+        close(supplyfd[0]);
+        close(ingestfd[1]);
+        return process;
     }
-    close(fds[0]); // not used in parent
-    return process;
+
+    // child
+
+    close(supplyfd[1]);
+    close(ingestfd[0]);
+    
+    if (supplyChildInput) dup2(supplyfd[0], STDIN_FILENO);
+    if (ingestChildOutput) dup2(ingestfd[1], STDOUT_FILENO);
+
+    close(supplyfd[0]);
+    close(ingestfd[1]);
+
+    execvp(argv[0], argv);
 }
