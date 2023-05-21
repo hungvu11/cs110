@@ -46,28 +46,44 @@ int main(int argc, char *argv[]) {
   assert(WIFSTOPPED(status));
   ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD);
 
-  while (true) {
-    ptrace(PTRACE_SYSCALL, pid, 0, 0);
-    waitpid(pid, &status, 0);
-    if (WIFSTOPPED(status) && (WSTOPSIG(status) == (SIGTRAP | 0x80))) {
-      int syscall = ptrace(PTRACE_PEEKUSER, pid, ORIG_RAX * sizeof(long));
-      cout << "syscall(" << syscall << ") = " << flush;
-      break;
-    }
+  map<int, std::string> systemCallNumbers;
+  map<std::string, int> systemCallNames;
+  map<std::string, systemCallSignature> systemCallSignatures;
+
+  if (!simple) {
+    compileSystemCallData(systemCallNumbers, systemCallNames, systemCallSignatures, rebuild);
   }
 
   while (true) {
     ptrace(PTRACE_SYSCALL, pid, 0, 0);
     waitpid(pid, &status, 0);
-    if (WIFSTOPPED(status) && (WSTOPSIG(status) == (SIGTRAP | 0x80))) {
+    if (WIFEXITED(status)) {
+      cout << "<no return>" << endl;
+      break;
+    } else if (WIFSTOPPED(status) && (WSTOPSIG(status) == (SIGTRAP | 0x80))) {
+      int opcode = ptrace(PTRACE_PEEKUSER, pid, ORIG_RAX * sizeof(long));
+      if (simple) {
+        cout << "syscall(" << opcode << ") = " << flush;
+      } else {
+        string syscall = systemCallNumbers[opcode];
+        systemCallSignature arg = systemCallSignatures[syscall];
+      }
+
+      ptrace(PTRACE_SYSCALL, pid, 0, 0);
+      waitpid(pid, &status, 0);
+
+      if (WIFEXITED(status)) {
+        cout << "<no return>" << endl;
+        break;
+      }
       long retval = ptrace(PTRACE_PEEKUSER, pid, RAX * sizeof(long));
-      cout << retval << endl;
-      break;
-    }
-  }
+      if (simple) {
+        cout << retval << endl;
+      } else {
 
-  kill(pid, SIGKILL);
-  waitpid(pid, &status, 0);
-  assert(WIFSIGNALED(status));
-  return 0;
+      }
+    } 
+  }
+  cout << "Program exited normally with status " << WEXITSTATUS(status) << endl;
+  return WEXITSTATUS(status);
 }
