@@ -68,7 +68,6 @@ static void installSignalHandlers() {
  * Creates a new job on behalf of the provided pipeline.
  */
 static void createJob(const pipeline& p) {
-  cout << p; // remove this line once you get started
   /* STSHJob& job = */ joblist.addJob(kForeground);
 }
 
@@ -91,6 +90,19 @@ int main(int argc, char *argv[]) {
       pipeline p(line);
       bool builtin = handleBuiltin(p);
       if (!builtin) createJob(p);
+      
+      pid_t pid = fork();
+      if (pid == 0) { //child 
+        command cmd = p.commands[0];
+        char* argv[kMaxArguments + 1];
+        argv[0] = cmd.command;
+        for (size_t i=1; i<=kMaxArguments; i++) {
+          argv[i] = cmd.tokens[i-1];
+        }
+        execvp(cmd.command, argv);
+      }
+
+      waitpid(pid, NULL, 0);
     } catch (const STSHException& e) {
       cerr << e.what() << endl;
       if (getpid() != stshpid) exit(0); // if exception is thrown from child process, kill it
