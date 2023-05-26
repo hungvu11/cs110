@@ -91,17 +91,18 @@ int main(int argc, char *argv[]) {
       bool builtin = handleBuiltin(p);
       if (!builtin) createJob(p);
       
+
       pid_t pid = fork();
       if (pid == 0) { //child 
         command cmd = p.commands[0];
-        char* argv[kMaxArguments + 1];
+        char* argv[kMaxArguments + 2];
         argv[0] = cmd.command;
-        for (size_t i=1; i<=kMaxArguments; i++) {
-          argv[i] = cmd.tokens[i-1];
+        for (size_t i=0; i<=kMaxArguments; i++) {
+          argv[i+1] = cmd.tokens[i];
         }
         execvp(cmd.command, argv);
       }
-
+      setpgid(pid, 0);
       waitpid(pid, NULL, 0);
     } catch (const STSHException& e) {
       cerr << e.what() << endl;
