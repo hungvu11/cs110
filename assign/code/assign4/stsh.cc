@@ -81,6 +81,15 @@ static void reapChild(int sig) {
   }
 }
 
+static void handleSIGINT(int sig) {
+  if (joblist.containsProcess(fgpid))
+    kill(fgpid, SIGINT);
+}
+
+static void handleSIGTSPT(int sig) {
+  if (joblist.containsProcess(fgpid))
+    kill(fgpid, SIGTSTP);
+}
 /**
  * Function: installSignalHandlers
  * -------------------------------
@@ -94,6 +103,8 @@ static void installSignalHandlers() {
   installSignalHandler(SIGTTIN, SIG_IGN);
   installSignalHandler(SIGTTOU, SIG_IGN);
   installSignalHandler(SIGCHLD, reapChild);
+  installSignalHandler(SIGINT, handleSIGINT);
+  installSignalHandler(SIGTSTP, handleSIGTSPT);
 }
 
 /**
