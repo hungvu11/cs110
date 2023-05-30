@@ -18,7 +18,7 @@
  *    
  * As you detect state changes in individual processes, you can update process states like this:
  * 
- *    static void updateJobList(STSHJobList& jobList, pid_t pid, STSHProcess state) {
+ *    static void updateJobList(STSHJobList& jobList, pid_t pid, STSHProcessState state) {
  *      if (!jobList.containsProcess(pid)) return;
  *      STSHJob& job = jobList.getJobWithProcess(pid);
  *      assert(job.containsProcess(pid));

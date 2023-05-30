@@ -89,7 +89,7 @@ static void handleSlayBuiltin(const pipeline& pipeline) {
     if (!cmd.tokens[i]) break;
     numOfToken++;
   }
-  if (numOfToken != 1 && numOfToken != 2) throw STSHException("Correct Format: slay [process pid] or bg [job number] [process index]");
+  if (numOfToken != 1 && numOfToken != 2) throw STSHException("Correct Format: slay [process pid] or slay [job number] [process index]");
 
   try {
     if (numOfToken == 2) {
@@ -104,7 +104,7 @@ static void handleSlayBuiltin(const pipeline& pipeline) {
       kill(process.getID(), SIGKILL);
     } else {
       int pid = stoi(cmd.tokens[0]);
-      if (joblist.containsProcess(pid)) {
+      if (joblist.containsProcess(pid) == true) {
         kill(pid, SIGKILL);
       } else STSHException("not found process!");
     }
@@ -112,6 +112,69 @@ static void handleSlayBuiltin(const pipeline& pipeline) {
     throw STSHException("Invalid arguments");
   }
 }
+
+static void handleHaltBuiltin(const pipeline& pipeline) {
+  command cmd = pipeline.commands[0];
+  size_t numOfToken = 0;
+  for (size_t i=0; i < kMaxArguments; i++) {
+    if (!cmd.tokens[i]) break;
+    numOfToken++;
+  }
+  if (numOfToken != 1 && numOfToken != 2) throw STSHException("Correct Format: halt [process pid] or halt [job number] [process index]");
+
+  try {
+    if (numOfToken == 2) {
+      int job_num = stoi(cmd.tokens[0]);
+      size_t process_index = stoi(cmd.tokens[1]);
+      if (job_num <= 0 || !joblist.containsJob(job_num)) throw STSHException("invalid job number");
+      STSHJob& job = joblist.getJob(job_num);
+      const vector<STSHProcess> processes = job.getProcesses();
+      if (process_index < 0 || process_index >= processes.size()) throw STSHException("invalid process index");
+      
+      STSHProcess process = processes[process_index];
+      kill(process.getID(), SIGSTOP);
+    } else {
+      int pid = stoi(cmd.tokens[0]);
+      if (joblist.containsProcess(pid) == true) {
+        kill(pid, SIGSTOP);
+      } else STSHException("not found process!");
+    }
+  } catch (invalid_argument& ia) {
+    throw STSHException("Invalid arguments");
+  }
+}
+
+static void handleContBuiltin(const pipeline& pipeline) {
+  command cmd = pipeline.commands[0];
+  size_t numOfToken = 0;
+  for (size_t i=0; i < kMaxArguments; i++) {
+    if (!cmd.tokens[i]) break;
+    numOfToken++;
+  }
+  if (numOfToken != 1 && numOfToken != 2) throw STSHException("Correct Format: cont [process pid] or cont [job number] [process index]");
+
+  try {
+    if (numOfToken == 2) {
+      int job_num = stoi(cmd.tokens[0]);
+      size_t process_index = stoi(cmd.tokens[1]);
+      if (job_num <= 0 || !joblist.containsJob(job_num)) throw STSHException("invalid job number");
+      STSHJob& job = joblist.getJob(job_num);
+      const vector<STSHProcess> processes = job.getProcesses();
+      if (process_index < 0 || process_index >= processes.size()) throw STSHException("invalid process index");
+      
+      STSHProcess process = processes[process_index];
+      kill(process.getID(), SIGCONT);
+    } else {
+      int pid = stoi(cmd.tokens[0]);
+      if (joblist.containsProcess(pid) == true) {
+        kill(pid, SIGCONT);
+      } else STSHException("not found process!");
+    }
+  } catch (invalid_argument& ia) {
+    throw STSHException("Invalid arguments");
+  }
+}
+
 static bool handleBuiltin(const pipeline& pipeline) {
   const string& command = pipeline.commands[0].command;
   auto iter = find(kSupportedBuiltins, kSupportedBuiltins + kNumSupportedBuiltins, command);
@@ -124,8 +187,8 @@ static bool handleBuiltin(const pipeline& pipeline) {
   case 2: handleFgBuiltin(pipeline); break;
   case 3: handleBgBuiltin(pipeline); break;
   case 4: handleSlayBuiltin(pipeline); break;
-  case 5: handleFgBuiltin(pipeline); break;
-  case 6: handleFgBuiltin(pipeline); break;
+  case 5: handleHaltBuiltin(pipeline); break;
+  case 6: handleContBuiltin(pipeline); break;
   case 7: cout << joblist; break;
   default: throw STSHException("Internal Error: Builtin command not supported."); // or not implemented yet
   }
