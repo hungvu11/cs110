@@ -294,6 +294,7 @@ static void createJob(const pipeline& p) {
       argv[i+1] = cmd.tokens[i];
     }
     execvp(cmd.command, argv);
+    throw STSHException("Command " + string(cmd.command) + " failed: " + strerror(errno));
   }
   
   if (!p.background) {
