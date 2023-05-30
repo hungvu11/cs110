@@ -248,6 +248,8 @@ static void reapChild(int sig) {
   else if (WIFCONTINUED(status)) updateJobList(joblist, pid, kRunning);
   else updateJobList(joblist, pid, kTerminated);
 
+  if (tcsetpgrp(STDIN_FILENO, getpgrp()) == -1 && errno != ENOTTY)
+    throw STSHException(strerror(errno));
 }
 
 static void handleSIGINT(int sig) {
@@ -300,7 +302,10 @@ static void createJob(const pipeline& p) {
   if (!p.background) {
     STSHJob& job = joblist.addJob(kForeground);
     job.addProcess(STSHProcess(pid, p.commands[0]));
+    if (tcsetpgrp(STDIN_FILENO, pid) == -1 && errno != ENOTTY)
+      throw STSHException(strerror(errno));
     waitForForegroundProcess(pid);
+
   } else {
     STSHJob& job = joblist.addJob(kBackground);
     job.addProcess(STSHProcess(pid, p.commands[0]));
