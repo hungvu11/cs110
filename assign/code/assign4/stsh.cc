@@ -210,16 +210,16 @@ void blockSIGCHLD() {
 void unblockSIGCHLD() {
   toggleSIGCHLDBlock(SIG_UNBLOCK);
 }
-// /* static */ void addToJobList(STSHJobList& jobList, const vector<pair<pid_t, string>>& children) {
-//   STSHJob& job = jobList.addJob(kBackground); //
-//   for (const pair<string, pid_t>& child: children) {
-//     pid_t pid = child.first;
-//     const string& command = child.second;
-//     job.addProcess(STSHProcess(pid, command)); // third argument defaults to kRunning     
-//   }
+/* static */ void addToJobList(STSHJobList& jobList, const vector<pair<pid_t, command> >& children) {
+  STSHJob& job = jobList.addJob(kBackground); //
+  for (const pair<pid_t, command>& child: children) {
+    pid_t pid = child.first;
+    const command& cmd = child.second;
+    job.addProcess(STSHProcess(pid, cmd)); // third argument defaults to kRunning     
+  }
   
-//   cout << jobList;
-// }
+  cout << jobList;
+}
 static void updateJobList(STSHJobList& jobList, pid_t pid, STSHProcessState state) {
   if (!jobList.containsProcess(pid)) return;
   STSHJob& job = jobList.getJobWithProcess(pid);
@@ -227,6 +227,14 @@ static void updateJobList(STSHJobList& jobList, pid_t pid, STSHProcessState stat
   STSHProcess& process = job.getProcess(pid);
   process.setState(state);
   jobList.synchronize(job);
+
+  if (job.getState() == kForeground && process.getState() == kRunning) {
+    if (tcsetpgrp(STDIN_FILENO, pid) == -1 && errno != ENOTTY)
+      throw STSHException(strerror(errno));
+  } else {
+    if (tcsetpgrp(STDIN_FILENO, getpgrp()) == -1 && errno != ENOTTY)
+      throw STSHException(strerror(errno));
+  }
 }
 static void waitForForegroundProcess(pid_t pid) {
   fgpid = pid;
@@ -240,16 +248,12 @@ static void waitForForegroundProcess(pid_t pid) {
 
 static void reapChild(int sig) {
   int status;
-
   pid_t pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
   if (pid <= 0) return;
   if (pid == fgpid) fgpid = 0; // clear foreground process
   if (WIFSTOPPED(status)) updateJobList(joblist, pid, kStopped);
   else if (WIFCONTINUED(status)) updateJobList(joblist, pid, kRunning);
   else updateJobList(joblist, pid, kTerminated);
-
-  if (tcsetpgrp(STDIN_FILENO, getpgrp()) == -1 && errno != ENOTTY)
-    throw STSHException(strerror(errno));
 }
 
 static void handleSIGINT(int sig) {
@@ -284,33 +288,53 @@ static void installSignalHandlers() {
  * Creates a new job on behalf of the provided pipeline.
  */
 static void createJob(const pipeline& p) {
-  blockSIGCHLD();
-  pid_t pid = fork();
-  if (pid == 0) { //child 
-    unblockSIGCHLD();
-    setpgid(0, 0);
-    command cmd = p.commands[0];
-    char* argv[kMaxArguments + 2];
-    argv[0] = cmd.command;
-    for (size_t i=0; i<=kMaxArguments; i++) {
-      argv[i+1] = cmd.tokens[i];
+  pid_t pgid = 0;
+  int fds_r[2], fds_w[2];
+  pipe(fds_r); pipe(fds_w);
+  const vector<command>& cmds = p.commands;
+  STSHJob& job = joblist.addJob(kForeground);
+  if (p.background) job.setState(kBackground);
+
+  close(fds_r[0]);
+  close(fds_w[1]);
+  size_t numOfCommand = cmds.size();
+  for (size_t i=0; i<numOfCommand; i++) {
+    blockSIGCHLD();
+    pid_t pid = fork();
+    if (pid == 0) { //child 
+      unblockSIGCHLD();
+      if (i == 0 && numOfCommand > 1) {
+        close(fds_r[1]); // no writing necessary
+        dup2(fds_r[0], STDIN_FILENO);
+        close(fds_r[0]);
+      } else if (i == numOfCommand - 1 && numOfCommand > 1) {
+        close(fds_w[0]);
+        dup2(fds_w[1], STDOUT_FILENO);
+        close(fds_w[1]);
+      }
+      setpgid(0, pgid);
+      command cmd = p.commands[0];
+      char* argv[kMaxArguments + 2];
+      argv[0] = cmd.command;
+      for (size_t i=0; i<=kMaxArguments; i++) {
+        argv[i+1] = cmd.tokens[i];
+      }
+      execvp(cmd.command, argv);
+      throw STSHException("Command " + string(cmd.command) + " failed: " + strerror(errno));
     }
-    execvp(cmd.command, argv);
-    throw STSHException("Command " + string(cmd.command) + " failed: " + strerror(errno));
+    if (pgid == 0) pgid = pid;
+    setpgid(pid, pgid);
+    if (!p.background) {
+      job.addProcess(STSHProcess(pid, p.commands[i]));
+      if (tcsetpgrp(STDIN_FILENO, pgid) == -1 && errno != ENOTTY)
+        throw STSHException(strerror(errno));
+      waitForForegroundProcess(pid);
+    } else {
+      job.addProcess(STSHProcess(pid, p.commands[i]));
+      unblockSIGCHLD();
+    }
   }
   
-  if (!p.background) {
-    STSHJob& job = joblist.addJob(kForeground);
-    job.addProcess(STSHProcess(pid, p.commands[0]));
-    if (tcsetpgrp(STDIN_FILENO, pid) == -1 && errno != ENOTTY)
-      throw STSHException(strerror(errno));
-    waitForForegroundProcess(pid);
-
-  } else {
-    STSHJob& job = joblist.addJob(kBackground);
-    job.addProcess(STSHProcess(pid, p.commands[0]));
-    unblockSIGCHLD();
-  }
   cout << joblist;
 }
 
