@@ -22,8 +22,10 @@
 #include <sys/wait.h>
 using namespace std;
 
+#define INPUT_END 1                              // INPUT_END means where the pipe takes input
+#define OUTPUT_END 0                             // OUTPUT_END means where the pipe produces output
+
 static STSHJobList joblist; // the one piece of global data we need so signal handlers can access it
-static pid_t fgpid = 0;
 /**
  * Function: handleBuiltin
  * -----------------------
@@ -210,16 +212,16 @@ void blockSIGCHLD() {
 void unblockSIGCHLD() {
   toggleSIGCHLDBlock(SIG_UNBLOCK);
 }
-/* static */ void addToJobList(STSHJobList& jobList, const vector<pair<pid_t, command> >& children) {
-  STSHJob& job = jobList.addJob(kBackground); //
-  for (const pair<pid_t, command>& child: children) {
-    pid_t pid = child.first;
-    const command& cmd = child.second;
-    job.addProcess(STSHProcess(pid, cmd)); // third argument defaults to kRunning     
-  }
+// /* static */ void addToJobList(STSHJobList& jobList, const vector<pair<pid_t, string>>& children) {
+//   STSHJob& job = jobList.addJob(kBackground); //
+//   for (const pair<string, pid_t>& child: children) {
+//     pid_t pid = child.first;
+//     const string& command = child.second;
+//     job.addProcess(STSHProcess(pid, command)); // third argument defaults to kRunning     
+//   }
   
-  cout << jobList;
-}
+//   cout << jobList;
+// }
 static void updateJobList(STSHJobList& jobList, pid_t pid, STSHProcessState state) {
   if (!jobList.containsProcess(pid)) return;
   STSHJob& job = jobList.getJobWithProcess(pid);
@@ -236,11 +238,10 @@ static void updateJobList(STSHJobList& jobList, pid_t pid, STSHProcessState stat
       throw STSHException(strerror(errno));
   }
 }
-static void waitForForegroundProcess(pid_t pid) {
-  fgpid = pid;
+static void waitForForegroundProcess() {
   sigset_t empty;
   sigemptyset(&empty);
-  while (fgpid == pid) {
+  while (joblist.hasForegroundJob()) {
     sigsuspend(&empty);
   }
   unblockSIGCHLD();
@@ -248,22 +249,29 @@ static void waitForForegroundProcess(pid_t pid) {
 
 static void reapChild(int sig) {
   int status;
+
   pid_t pid = waitpid(-1, &status, WUNTRACED | WCONTINUED);
   if (pid <= 0) return;
-  if (pid == fgpid) fgpid = 0; // clear foreground process
   if (WIFSTOPPED(status)) updateJobList(joblist, pid, kStopped);
   else if (WIFCONTINUED(status)) updateJobList(joblist, pid, kRunning);
   else updateJobList(joblist, pid, kTerminated);
+
+  if (tcsetpgrp(STDIN_FILENO, getpgrp()) == -1 && errno != ENOTTY)
+    throw STSHException(strerror(errno));
 }
 
 static void handleSIGINT(int sig) {
-  if (joblist.containsProcess(fgpid))
-    kill(fgpid, SIGINT);
+  if (joblist.hasForegroundJob()) {
+    STSHJob& job = joblist.getForegroundJob();
+    kill(-job.getGroupID(), SIGINT);
+  }
 }
 
 static void handleSIGTSPT(int sig) {
-  if (joblist.containsProcess(fgpid))
-    kill(fgpid, SIGTSTP);
+  if (joblist.hasForegroundJob()) {
+    STSHJob& job = joblist.getForegroundJob();
+    kill(-job.getGroupID(), SIGTSTP);
+  }
 }
 /**
  * Function: installSignalHandlers
@@ -287,33 +295,52 @@ static void installSignalHandlers() {
  * -------------------
  * Creates a new job on behalf of the provided pipeline.
  */
+
+bool compareCommand(const command& cmd1, const command& cmd2) {
+  if (strcmp(cmd1.command, cmd2.command) != 0) return false;
+  for (size_t i=0; i< kMaxArguments; i++) {
+    if (!cmd1.tokens[i] && !cmd2.tokens[i]) break;
+    if (!cmd1.tokens[i] || !cmd2.tokens[i]) return false;
+    if (strcmp(cmd1.tokens[i], cmd2.tokens[i]) != 0) return false;
+  }
+  return true;
+}
+
 static void createJob(const pipeline& p) {
+  blockSIGCHLD();
   pid_t pgid = 0;
-  int fds_r[2], fds_w[2];
-  pipe(fds_r); pipe(fds_w);
-  const vector<command>& cmds = p.commands;
+  int fd[2];
+  pipe(fd);
+  vector<command> c = p.commands;
+  vector<command> cmds;
+  for (size_t i=0; i<c.size(); i++) {
+    bool ok = true;
+    for (int j=i-1; j>=0; j--) {
+      if (compareCommand(c[i], c[j])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) cmds.push_back(c[i]);
+  }
+  size_t numOfCommands = cmds.size();
   STSHJob& job = joblist.addJob(kForeground);
   if (p.background) job.setState(kBackground);
-
-  close(fds_r[0]);
-  close(fds_w[1]);
-  size_t numOfCommand = cmds.size();
-  for (size_t i=0; i<numOfCommand; i++) {
-    blockSIGCHLD();
+  for (size_t t = 0; t < numOfCommands; t++) {
     pid_t pid = fork();
     if (pid == 0) { //child 
       unblockSIGCHLD();
-      if (i == 0 && numOfCommand > 1) {
-        close(fds_r[1]); // no writing necessary
-        dup2(fds_r[0], STDIN_FILENO);
-        close(fds_r[0]);
-      } else if (i == numOfCommand - 1 && numOfCommand > 1) {
-        close(fds_w[0]);
-        dup2(fds_w[1], STDOUT_FILENO);
-        close(fds_w[1]);
+      if (t > 0) {
+        close(fd[INPUT_END]);
+        dup2(fd[OUTPUT_END], STDIN_FILENO);
+        close(fd[OUTPUT_END]);
+      } else {
+        close(fd[OUTPUT_END]);
+        dup2(fd[INPUT_END], STDOUT_FILENO);
+        close(fd[INPUT_END]);
       }
       setpgid(0, pgid);
-      command cmd = p.commands[0];
+      command cmd = cmds[t];
       char* argv[kMaxArguments + 2];
       argv[0] = cmd.command;
       for (size_t i=0; i<=kMaxArguments; i++) {
@@ -322,20 +349,19 @@ static void createJob(const pipeline& p) {
       execvp(cmd.command, argv);
       throw STSHException("Command " + string(cmd.command) + " failed: " + strerror(errno));
     }
+   
     if (pgid == 0) pgid = pid;
     setpgid(pid, pgid);
-    if (!p.background) {
-      job.addProcess(STSHProcess(pid, p.commands[i]));
-      if (tcsetpgrp(STDIN_FILENO, pgid) == -1 && errno != ENOTTY)
-        throw STSHException(strerror(errno));
-      waitForForegroundProcess(pid);
-    } else {
-      job.addProcess(STSHProcess(pid, p.commands[i]));
-      unblockSIGCHLD();
-    }
+    job.addProcess(STSHProcess(pid, cmds[t]));
   }
-  
+  close(fd[INPUT_END]);
+  close(fd[OUTPUT_END]);
+  if (!p.background) {
+    if (tcsetpgrp(STDIN_FILENO, pgid) == -1 && errno != ENOTTY)
+      throw STSHException(strerror(errno));
+  } 
   cout << joblist;
+  waitForForegroundProcess();
 }
 
 /**
@@ -357,6 +383,7 @@ int main(int argc, char *argv[]) {
       pipeline p(line);
       bool builtin = handleBuiltin(p);
       if (!builtin) createJob(p);
+      
     } catch (const STSHException& e) {
       cerr << e.what() << endl;
       if (getpid() != stshpid) exit(0); // if exception is thrown from child process, kill it
